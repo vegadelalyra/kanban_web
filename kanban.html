@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Kanban v5 (Focus Fix)</title>
+    <style>
+        /* --- 1. Base & Theme --- */
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --border-color: #333;
+            --accent-color: #00bcd4; /* Cyan */
+            --warning-color: #ffc107; /* Yellow */
+            --success-color: #28a745; /* Green for Copy */
+            --text-color: #e0e0e0;
+            --text-muted: #888;
+            --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            
+            /* Focus Rings */
+            --focus-ring: 0 0 0 3px var(--bg-color), 0 0 0 5px var(--accent-color);
+            --warning-focus-ring: 0 0 0 3px var(--bg-color), 0 0 0 5px var(--warning-color);
+            --success-focus-ring: 0 0 0 3px var(--bg-color), 0 0 0 5px var(--success-color);
+            
+            --modal-bg: rgba(30, 30, 30, 0.85);
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-main);
+            margin: 0;
+            padding: 24px;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+            user-select: none; /* Disable text selection outside of inputs */
+        }
+
+        /* --- 2. Kanban Grid Layout --- */
+        #kanban-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-auto-rows: 1fr; /* Make rows equal height */
+            gap: 20px;
+            height: calc(100vh - 48px); /* Full height minus padding */
+        }
+
+        /* --- 3. Prompt Card Styling --- */
+        .prompt-card, .add-button {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            transition: all 0.2s ease-out;
+            outline: none; /* Custom focus ring */
+        }
+
+        .prompt-card:focus, .add-button:focus {
+            box-shadow: var(--focus-ring);
+            transform: scale(1.02);
+        }
+        
+        /* Delete Warning State */
+        .prompt-card.delete-warning:focus {
+             box-shadow: var(--warning-focus-ring);
+        }
+        
+        /* Copy Success State */
+        .prompt-card.copy-success {
+             animation: success-flash 0.5s ease-out;
+        }
+        @keyframes success-flash {
+            0% { box-shadow: var(--success-focus-ring); }
+            100% { box-shadow: var(--focus-ring); }
+        }
+
+
+        /* --- 4. Add Button (Empty State & Grid State) --- */
+        .add-button {
+            cursor: pointer;
+            justify-content: center;
+            align-items: center;
+            color: var(--text-muted);
+            font-size: 1.5em;
+            font-weight: 500;
+        }
+        
+        .add-button.centered {
+            grid-column: 2 / 3;
+            grid-row: 2 / 3;
+            font-size: 2em;
+        }
+
+        .add-button .plus {
+            font-size: 3em;
+            line-height: 1;
+            font-weight: 300;
+            color: var(--accent-color);
+        }
+
+        /* --- 5. Card Header (Title, Drag Handle) --- */
+        .card-header {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-color);
+            border-top: 4px solid var(--accent-color);
+            border-radius: 12px 12px 0 0;
+            cursor: grab;
+        }
+        .card-header:active {
+            cursor: grabbing;
+        }
+
+        .card-title {
+            font-weight: 600;
+            font-size: 1.1em;
+            color: var(--text-color);
+            outline: none;
+            display: block; /* Allows placeholder to work */
+        }
+
+        .card-title:empty::before {
+            content: "Right-click or Shift+Enter to title...";
+            color: var(--text-muted);
+            font-style: italic;
+            font-weight: 400;
+        }
+
+        .card-title[contenteditable="true"] {
+            background-color: var(--bg-color);
+            padding: 2px 5px;
+            border-radius: 4px;
+            box-shadow: inset 0 0 0 2px var(--accent-color);
+            user-select: text; /* Allow selection when editing */
+        }
+
+        /* --- 6. Card Content (Text Area) --- */
+        .card-content {
+            flex-grow: 1;
+            background: none;
+            border: none;
+            outline: none;
+            resize: none;
+            color: var(--text-color);
+            font-family: "Menlo", "Consolas", monospace;
+            font-size: 1em;
+            line-height: 1.6;
+            padding: 14px;
+            border-radius: 0 0 12px 12px;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            user-select: text; /* Allow selection */
+        }
+
+        .card-content:focus {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+
+        /* --- 7. Expand/Shrink State Logic --- */
+        .prompt-card[data-state="shrunk"] {
+            min-height: 60px;
+            height: 60px;
+        }
+
+        .prompt-card[data-state="shrunk"] .card-content {
+            opacity: 0;
+            visibility: hidden;
+            height: 0;
+            padding: 0;
+        }
+
+        /* --- 8. Drag & Drop Visuals --- */
+        .prompt-card.dragging {
+            opacity: 0.4;
+        }
+        .prompt-card.drag-over {
+            border: 2px dashed var(--accent-color);
+        }
+
+        /* --- 9. Creation Modal --- */
+        #modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--modal-bg);
+            backdrop-filter: blur(5px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            opacity: 1;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+        }
+        
+        #modal-overlay.hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        #modal-content {
+            width: 70vw;
+            height: 60vh;
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+        }
+
+        #modal-textarea {
+            flex-grow: 1;
+            background: none;
+            border: none;
+            outline: none;
+            resize: none;
+            color: var(--text-color);
+            font-family: "Menlo", "Consolas", monospace;
+            font-size: 1.1em;
+            line-height: 1.6;
+            padding: 20px;
+            border-radius: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="kanban-grid"></div>
+
+    <div id="modal-overlay" class="hidden">
+        <div id="modal-content">
+            <textarea id="modal-textarea" placeholder="Write your next brilliant prompt here... (Press Esc or click outside to save)"></textarea>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- 1. DOM Element References ---
+            const grid = document.getElementById('kanban-grid');
+            const modalOverlay = document.getElementById('modal-overlay');
+            const modalTextarea = document.getElementById('modal-textarea');
+
+            // --- 2. State Management ---
+            let state = {
+                prompts: [], // { id: Date.now(), title: "", content: "", state: "expanded" }
+                focusedIndex: 0,
+                expandedQueue: [], // Tracks the last 4 expanded cards' IDs
+                deleteWarningId: null, // For 2-step delete
+                editingPromptId: null  // ID of prompt being edited in zen mode
+            };
+            const MAX_PROMPTS = 9;
+            const MAX_EXPANDED = 6;
+            const NUM_COLS = 3;
+
+            // Disable global context menu
+            document.addEventListener('contextmenu', e => e.preventDefault());
+
+            function loadState() {
+                const savedState = localStorage.getItem('promptKanbanState');
+                if (savedState) {
+                    state = JSON.parse(savedState);
+                    state.focusedIndex = 0; 
+                    state.deleteWarningId = null; 
+                    state.editingPromptId = null; 
+                }
+                render();
+            }
+
+            function saveState() {
+                localStorage.setItem('promptKanbanState', JSON.stringify(state));
+            }
+
+            function render() {
+                grid.innerHTML = ''; 
+
+                if (state.prompts.length === 0) {
+                    const addButton = createAddButton(true);
+                    grid.appendChild(addButton);
+                } else {
+                    state.prompts.forEach((prompt, index) => {
+                        const card = createPromptCard(prompt, index);
+                        grid.appendChild(card);
+                    });
+
+                    if (state.prompts.length < MAX_PROMPTS) {
+                        const addButton = createAddButton(false);
+                        grid.appendChild(addButton);
+                    }
+                }
+                
+                focusGridElement(state.focusedIndex);
+            }
+
+            function createPromptCard(prompt, index) {
+                const card = document.createElement('div');
+                card.className = 'prompt-card';
+                card.dataset.id = prompt.id;
+                card.dataset.index = index;
+                card.dataset.state = prompt.state; 
+                card.tabIndex = 0; 
+                
+                if (prompt.id === state.deleteWarningId) {
+                    card.classList.add('delete-warning');
+                }
+
+                // --- Card Header ---
+                const header = document.createElement('div');
+                header.className = 'card-header';
+                header.draggable = true;
+
+                const title = document.createElement('span');
+                title.className = 'card-title';
+                title.textContent = prompt.title;
+
+                const editTitle = (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    title.contentEditable = "true";
+                    title.focus();
+                    document.execCommand('selectAll', false, null);
+                };
+
+                // Right-click to edit title
+                card.addEventListener('contextmenu', editTitle); 
+                
+                title.addEventListener('blur', (e) => {
+                    title.contentEditable = "false";
+                    updatePromptTitle(prompt.id, e.target.textContent);
+                });
+                title.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        title.blur();
+                    }
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        title.blur();
+                        card.focus();
+                    }
+                    e.stopPropagation(); // Stop global handlers
+                });
+                
+                // Click header to toggle expand/shrink
+                header.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    toggleExpand(prompt.id);
+                });
+
+                header.appendChild(title);
+                card.appendChild(header);
+
+                // --- Card Content (Text Area) ---
+                const content = document.createElement('textarea');
+                content.className = 'card-content';
+                content.value = prompt.content;
+                content.placeholder = "This prompt is empty...";
+
+                content.addEventListener('blur', (e) => {
+                    updatePromptContent(prompt.id, e.target.value);
+                });
+                
+                content.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        content.blur(); 
+                        card.focus();   
+                    }
+                    e.stopPropagation(); 
+                });
+
+                card.appendChild(content);
+
+                // --- Card-Level Events ---
+                card.addEventListener('focus', () => {
+                    state.focusedIndex = index;
+                });
+                
+                card.addEventListener('blur', () => {
+                   if (state.deleteWarningId === prompt.id) {
+                       state.deleteWarningId = null;
+                       card.classList.remove('delete-warning');
+                   } 
+                });
+                
+                card.addEventListener('keydown', (e) => {
+                    // Stop if user is already editing title
+                    if (document.activeElement.isContentEditable) return; 
+                    
+                    // Shift+Enter: Edit Title
+                    if (e.shiftKey && e.key === 'Enter') {
+                        e.preventDefault();
+                        editTitle(e);
+                        return;
+                    }
+
+                    // *** START FIX ***
+                    // Ctrl/Shift + Space: Toggle expand/shrink (no focus)
+                    if ((e.ctrlKey || e.shiftKey) && e.key === ' ') {
+                        e.preventDefault();
+                        toggleExpand(prompt.id, false); // false = don't force focus
+                        return;
+                    }
+                    
+                    // Space (alone): Focus in-card textarea
+                    if (e.key === ' ' && !e.shiftKey && !e.ctrlKey) {
+                        e.preventDefault();
+                        toggleExpand(prompt.id, true); // true = force focus content
+                        return;
+                    }
+                    // *** END FIX ***
+                    
+                    // Enter: Open Zen Mode for Editing
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        // Explicitly blur the card before opening the modal
+                        card.blur(); 
+                        openModal(prompt.id); 
+                        return;
+                    }
+                    
+                    // Any other key press -> text mode
+                    const navAndActionKeys = [
+                        'Enter', ' ', 'Shift', 'Control', 'Alt', 'Meta', 'Escape', 
+                        'Delete', 'Backspace', 'Tab', 'ArrowUp', 'ArrowDown', 
+                        'ArrowLeft', 'ArrowRight', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+                    ];
+
+                    if (!navAndActionKeys.includes(e.key) && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+                        e.preventDefault();
+                        toggleExpand(prompt.id, true); // Focus in-card textarea
+                    }
+                });
+
+                // --- Drag & Drop Events ---
+                card.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/plain', prompt.id);
+                    e.target.classList.add('dragging');
+                });
+                card.addEventListener('dragend', (e) => e.target.classList.remove('dragging'));
+                card.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.target.closest('.prompt-card').classList.add('drag-over');
+                });
+                card.addEventListener('dragleave', (e) => {
+                    e.target.closest('.prompt-card').classList.remove('drag-over');
+                });
+                card.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    e.target.closest('.prompt-card').classList.remove('drag-over');
+                    const draggedId = e.dataTransfer.getData('text/plain');
+                    const targetId = prompt.id;
+                    
+                    const draggedIndex = state.prompts.findIndex(p => p.id === draggedId);
+                    const targetIndex = state.prompts.findIndex(p => p.id === targetId);
+                    
+                    if (draggedIndex !== -1 && targetIndex !== -1) {
+                         swapPrompts(draggedIndex, targetIndex);
+                    }
+                });
+
+                return card;
+            }
+
+            function createAddButton(isCentered) {
+                const button = document.createElement('div');
+                button.className = 'add-button';
+                if (isCentered) button.classList.add('centered');
+                button.innerHTML = `<span class="plus">+</span><div>Add a prompt!</div>`;
+                button.tabIndex = 0; 
+                
+                button.addEventListener('click', () => openModal(null)); 
+                
+                const buttonIndex = isCentered ? 0 : state.prompts.length;
+                button.dataset.index = buttonIndex;
+                
+                button.addEventListener('focus', () => {
+                    state.focusedIndex = buttonIndex;
+                    state.deleteWarningId = null; 
+                });
+
+                button.addEventListener('keydown', (e) => {
+                    const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Escape'];
+                    if (navKeys.includes(e.key) || (e.key >= '1' && e.key <= '9')) {
+                        return; 
+                    }
+                    
+                    e.preventDefault();
+                    // Explicitly blur the button
+                    button.blur();
+                    openModal(null); 
+                });
+                return button;
+            }
+
+            // --- 3. Modal Logic (Refactored for Edit/Create) ---
+            
+            function openModal(promptId = null) {
+                let existingContent = "";
+                if (promptId) {
+                    const prompt = state.prompts.find(p => p.id === promptId);
+                    if (prompt) {
+                        existingContent = prompt.content;
+                    }
+                }
+                
+                state.editingPromptId = promptId; 
+                
+                modalOverlay.classList.remove('hidden');
+                modalTextarea.value = existingContent;
+                
+                // Use setTimeout(10) to ensure focus happens *after* the element is visible
+                setTimeout(() => {
+                    modalTextarea.focus();
+                
+                    if (promptId) {
+                        modalTextarea.select();
+                    } else {
+                        modalTextarea.setSelectionRange(existingContent.length, existingContent.length);
+                    }
+                }, 10); // 10ms is safer than 0ms
+            }
+
+            function closeModal() {
+                modalOverlay.classList.add('hidden');
+                const content = modalTextarea.value;
+                const editingId = state.editingPromptId; 
+                state.editingPromptId = null; 
+
+                if (editingId) {
+                    // --- UPDATE logic ---
+                    updatePromptContent(editingId, content);
+                    state.focusedIndex = state.prompts.findIndex(p => p.id === editingId);
+                    render(); // Re-render to show update
+                } else if (content.trim().length > 0) {
+                    // --- CREATE logic ---
+                    const newPrompt = {
+                        id: `prompt_${Date.now()}`,
+                        title: "",
+                        content: content,
+                        state: "expanded"
+                    };
+                    state.prompts.push(newPrompt);
+                    addToExpandedQueue(newPrompt.id);
+                    state.focusedIndex = state.prompts.length - 1;
+                    saveState();
+                    render();
+                } else {
+                     // --- DO NOTHING logic (new card, no content) ---
+                     focusGridElement(state.focusedIndex);
+                }
+            }
+
+            // Add listeners to close modal
+            modalOverlay.addEventListener('click', (e) => {
+                if (e.target === modalOverlay) closeModal();
+            });
+            
+            modalTextarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    e.stopPropagation(); 
+                    closeModal(); 
+                }
+            });
+
+            // --- 4. State Update Functions ---
+
+            function updatePromptContent(id, content) {
+                const prompt = state.prompts.find(p => p.id === id);
+                if (prompt && prompt.content !== content) {
+                    prompt.content = content;
+                    saveState();
+                }
+            }
+
+            function updatePromptTitle(id, title) {
+                const prompt = state.prompts.find(p => p.id === id);
+                if (prompt && prompt.title !== title) {
+                    prompt.title = title;
+                    saveState();
+                }
+            }
+            
+            function addToExpandedQueue(id) {
+                state.expandedQueue = state.expandedQueue.filter(queueId => queueId !== id);
+                state.expandedQueue.unshift(id);
+                
+                if (state.expandedQueue.length > MAX_EXPANDED) {
+                    const idToShrink = state.expandedQueue.pop(); 
+                    const promptToShrink = state.prompts.find(p => p.id === idToShrink);
+                    if (promptToShrink) {
+                        promptToShrink.state = "shrunk";
+                    }
+                }
+            }
+
+            function toggleExpand(id, forceContentFocus = false) {
+                const prompt = state.prompts.find(p => p.id === id);
+                if (!prompt) return;
+
+                if (prompt.state === "expanded" && !forceContentFocus) {
+                    prompt.state = "shrunk";
+                    state.expandedQueue = state.expandedQueue.filter(queueId => queueId !== id);
+                } else {
+                    prompt.state = "expanded";
+                    addToExpandedQueue(id);
+                }
+                saveState();
+                render();
+                
+                if (prompt.state === "expanded" && forceContentFocus) {
+                     const cardElement = grid.querySelector(`[data-id="${id}"]`);
+                     if (cardElement) {
+                         const contentEl = cardElement.querySelector('.card-content');
+                         if (contentEl) contentEl.focus();
+                     }
+                }
+            }
+            
+            function swapPrompts(indexA, indexB) {
+                if (indexA < 0 || indexA >= state.prompts.length ||
+                    indexB < 0 || indexB >= state.prompts.length) {
+                    return; 
+                }
+                
+                [state.prompts[indexA], state.prompts[indexB]] = [state.prompts[indexB], state.prompts[indexA]];
+                
+                state.focusedIndex = indexB; 
+                state.deleteWarningId = null; 
+                saveState();
+                render();
+            }
+            
+            function deletePrompt(id) {
+                state.prompts = state.prompts.filter(p => p.id !== id);
+                state.expandedQueue = state.expandedQueue.filter(queueId => queueId !== id);
+                state.deleteWarningId = null;
+                
+                if (state.focusedIndex >= state.prompts.length) {
+                    state.focusedIndex = Math.max(0, state.prompts.length); 
+                }
+                
+                saveState();
+                render();
+            }
+
+            // --- 5. Global Keyboard Navigation ---
+
+            function focusGridElement(index) {
+                // Do not steal focus if modal is opening/open
+                if (!modalOverlay.classList.contains('hidden')) {
+                    return;
+                }
+                
+                const totalElements = grid.children.length;
+                if (totalElements === 0) return;
+                
+                const newIndex = Math.max(0, Math.min(index, totalElements - 1));
+                state.focusedIndex = newIndex;
+                
+                const elementToFocus = grid.children[newIndex];
+                if (elementToFocus) {
+                    elementToFocus.focus();
+                }
+            }
+            
+            function moveCard(direction) {
+                const currentIndex = state.focusedIndex;
+                
+                if (currentIndex >= state.prompts.length) return; 
+                
+                let targetIndex = -1;
+                
+                switch (direction) {
+                    case 'ArrowRight': targetIndex = currentIndex + 1; break;
+                    case 'ArrowLeft':  targetIndex = currentIndex - 1; break;
+                    case 'ArrowDown':  targetIndex = currentIndex + NUM_COLS; break;
+                    case 'ArrowUp':    targetIndex = currentIndex - NUM_COLS; break;
+                }
+                
+                if (targetIndex === state.prompts.length) {
+                    targetIndex = state.prompts.length - 1; 
+                }
+
+                swapPrompts(currentIndex, targetIndex);
+            }
+            
+            async function copyFocusedCardContent() {
+                const focusedCard = grid.children[state.focusedIndex];
+                if (!focusedCard || !focusedCard.classList.contains('prompt-card')) return;
+                
+                const promptId = focusedCard.dataset.id;
+                const prompt = state.prompts.find(p => p.id === promptId);
+                
+                if (prompt && navigator.clipboard) {
+                    try {
+                        await navigator.clipboard.writeText(prompt.content);
+                        // Visual confirmation
+                        focusedCard.classList.add('copy-success');
+                        setTimeout(() => focusedCard.classList.remove('copy-success'), 500);
+                    } catch (err) {
+                        console.error('Failed to copy text: ', err);
+                    }
+                }
+            }
+
+            async function pasteToFocusedCard() {
+                const focusedCard = grid.children[state.focusedIndex];
+                if (!focusedCard || !focusedCard.classList.contains('prompt-card')) return;
+                
+                const promptId = focusedCard.dataset.id;
+                if (promptId && navigator.clipboard) {
+                    try {
+                        const text = await navigator.clipboard.readText();
+                        updatePromptContent(promptId, text);
+                        render();
+                        const cardElement = grid.querySelector(`[data-id="${promptId}"]`);
+                        if (cardElement) cardElement.focus();
+                        
+                    } catch (err) {
+                        console.error('Failed to read clipboard contents: ', err);
+                    }
+                }
+            }
+
+            document.addEventListener('keydown', (e) => {
+                const activeEl = document.activeElement;
+                // --- TEXT MODE GUARD ---
+                if (activeEl === modalTextarea || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable) {
+                    return;
+                }
+                
+                // --- ZEN MODE GUARD ---
+                if (!modalOverlay.classList.contains('hidden')) {
+                    return;
+                }
+                
+                // --- FOCUS MODE LOGIC ---
+
+                // Handle Card Movement (Ctrl/Shift + Arrow)
+                if ((e.shiftKey || e.ctrlKey) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                    e.preventDefault();
+                    moveCard(e.key);
+                    return;
+                }
+                
+                // Handle Ctrl+C (Copy)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                    e.preventDefault();
+                    copyFocusedCardContent();
+                    return;
+                }
+                
+                // Handle Ctrl+V (Paste)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+                    e.preventDefault();
+                    pasteToFocusedCard();
+                    return;
+                }
+
+                // Handle Deletion (Delete/Backspace)
+                if (e.key === 'Delete' || e.key === 'Backspace') {
+                    e.preventDefault();
+                    const focusedCard = grid.children[state.focusedIndex];
+                    if (focusedCard && focusedCard.classList.contains('prompt-card')) {
+                        const promptId = focusedCard.dataset.id;
+                        const prompt = state.prompts.find(p => p.id === promptId);
+                        
+                        if (prompt && !prompt.content.trim() && !prompt.title.trim()) {
+                            deletePrompt(promptId);
+                            return;
+                        }
+
+                        if (state.deleteWarningId === promptId) {
+                            deletePrompt(promptId); 
+                        } else {
+                            state.deleteWarningId = promptId; 
+                            focusedCard.classList.add('delete-warning');
+                        }
+                    }
+                    return;
+                }
+                
+                // Clear warning on any other key press
+                if (state.deleteWarningId) {
+                    const oldWarnCard = grid.querySelector('.delete-warning');
+                    if(oldWarnCard) oldWarnCard.classList.remove('delete-warning');
+                    state.deleteWarningId = null;
+                }
+
+                // --- Handle Navigation (Arrows & Numbers) ---
+                let newIndex = state.focusedIndex;
+                let handled = false;
+
+                // Number keys 1-9
+                if (e.key >= '1' && e.key <= '9') {
+                    newIndex = parseInt(e.key) - 1; // '1' -> index 0
+                    handled = true;
+                } 
+                // Arrow keys
+                else {
+                    switch (e.key) {
+                        case 'ArrowRight': newIndex++; handled = true; break;
+                        case 'ArrowLeft':  newIndex--; handled = true; break;
+                        case 'ArrowDown':  newIndex += NUM_COLS; handled = true; break;
+                        case 'ArrowUp':    newIndex -= NUM_COLS; handled = true; break;
+                        case 'Escape':
+                            if (document.activeElement && document.activeElement !== document.body) {
+                                document.activeElement.blur();
+                            }
+                            handled = true;
+                            break;
+                    }
+                }
+
+                if (handled) {
+                    e.preventDefault(); 
+                    if (e.key !== 'Escape') {
+                         focusGridElement(newIndex);
+                    }
+                }
+            });
+
+            // --- 6. Initial Load ---
+            loadState();
+        });
+    </script>
+</body>
+</html>
